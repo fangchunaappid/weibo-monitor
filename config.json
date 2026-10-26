@@ -1,11 +1,10 @@
 {
-  "_说明": "uid 填博主数字 ID(主页网址 weibo.com/u/XXXXXXXX 里的数字); cookie 可选, 填了更稳",
-  "uid": "3962719063",
-  "screen_name": "",
+  "_说明": "uids 填博主数字 ID 数组(主页网址 weibo.com/u/XXXXXXXX 里的数字), 支持同时监控多个; cookie 可选, 填了更稳",
+  "uids": ["3962719063", "6246096815"],
   "cookie": "",
   "interval_minutes": [8, 12],
   "feishu": {
-    "_说明": "webhook/secret 建议放 GitHub Secrets(环境变量 FEISHU_WEBHOOK / FEISHU_SECRET), 本机运行才填这里",
+    "_说明": "webhook/secret 放 GitHub Secrets(环境变量 FEISHU_WEBHOOK / FEISHU_SECRET), 本机运行才填这里",
     "webhook": "",
     "secret": ""
   }
