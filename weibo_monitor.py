@@ -8,15 +8,16 @@
     python weibo_monitor.py --loop   # 本机持续轮询
 
 配置:
-    config.json    填博主 uid(必填)
+    config.json    填博主 uids 数组(支持同时监控多个博主)
     环境变量(优先级更高):
-        WB_UID          博主数字 uid
+        WB_UIDS         逗号分隔的多个博主 uid
+        WB_UID          单个博主 uid(本地测试用, 兼容旧配置)
         WEIBO_COOKIE    可选, 浏览器登录微博后的 Cookie(默认用自动游客身份, 无需登录)
         FEISHU_WEBHOOK  飞书自定义机器人 webhook 地址
         FEISHU_SECRET   飞书机器人签名校验密钥(未开启则不填)
 
 状态:
-    state.json 记录已推送的最新微博 id, 换博主或删掉它则重新以当前最新一条为基线(不推送旧微博)
+    state.json 记录各博主已推送的最新微博 id, 换博主或删掉对应条目则重新以当前最新一条为基线(不推送旧微博)
 
 GitHub Actions 部署:
     1. 建议公开仓库(Actions 免费额度不限时); webhook 等敏感信息放 Secrets, 泄露风险低
@@ -98,7 +99,10 @@ def load_config():
         with open(CONFIG_FILE, encoding="utf-8") as f:
             cfg = json.load(f)
     env = os.environ
-    cfg["uid"] = str(env.get("WB_UID") or cfg.get("uid") or "").strip()
+    raw = (env.get("WB_UIDS") or env.get("WB_UID")
+           or ",".join(cfg.get("uids") or [])
+           or cfg.get("uid") or "")
+    cfg["uids"] = [u.strip() for u in str(raw).split(",") if u.strip()]
     cfg["cookie"] = (env.get("WEIBO_COOKIE") or cfg.get("cookie") or "").strip()
     feishu = cfg.setdefault("feishu", {})
     feishu["webhook"] = (env.get("FEISHU_WEBHOOK") or feishu.get("webhook") or "").strip()
@@ -107,13 +111,24 @@ def load_config():
 
 
 def load_state():
+    state = {"bloggers": {}}
     if os.path.exists(STATE_FILE):
         try:
             with open(STATE_FILE, encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
         except Exception:
             log.warning("state.json 损坏, 将重建基线")
-    return {}
+            return state
+        if "bloggers" not in data and data.get("uid"):
+            # 旧版单博主结构自动迁移
+            data = {"bloggers": {data["uid"]: {
+                "last_id": data.get("last_id"),
+                "screen_name": data.get("screen_name"),
+            }}}
+            log.info("已将 state.json 迁移为多博主结构")
+        if isinstance(data.get("bloggers"), dict):
+            state["bloggers"] = data["bloggers"]
+    return state
 
 
 def save_state(state):
@@ -268,32 +283,41 @@ def push_feishu(webhook, secret, name, time_str, body):
 # ---------------------------------------------------------------- 主流程
 
 def check_once(cfg):
-    uid = cfg["uid"]
-    if not uid:
-        log.error("未配置博主 uid: 请在 config.json 或环境变量 WB_UID 中填写")
+    uids = cfg["uids"]
+    if not uids:
+        log.error("未配置博主 uid: 请在 config.json 的 uids 数组或环境变量 WB_UIDS 中填写")
         return 2
-
-    # 1. 抓取最新微博(逐页向前翻, 直到覆盖到已推送位置)
     state = load_state()
-    if state.get("uid") != uid:  # 换了博主 -> 重建基线
-        state = {"uid": uid}
-    last_id = int(state["last_id"]) if state.get("last_id") else 0
-    name = cfg.get("screen_name") or state.get("screen_name") or f"博主(uid={uid})"
+    worst = 0
+    for uid in uids:
+        try:
+            worst = max(worst, check_blogger(cfg, uid, state))
+        except Exception as e:  # noqa: BLE001
+            log.error("[%s] 检查异常: %s", uid, e)
+            worst = max(worst, 1)
+    return worst
+
+
+def check_blogger(cfg, uid, state):
+    """检查单个博主, 返回退出码: 0正常 1有失败 2配置错误"""
+    blogger = state["bloggers"].setdefault(uid, {})
+    last_id = int(blogger["last_id"]) if blogger.get("last_id") else 0
+    name = cfg.get("screen_name") or blogger.get("screen_name") or f"博主(uid={uid})"
 
     if not last_id:
         # 首次运行(或换了博主): 以当前最新一条为基线, 不推送历史微博
         posts = fetch_posts(uid, cfg["cookie"], 1)
         normal = [mb for mb in posts if mb.get("id") and not is_pinned(mb)]
         if not normal:
-            log.warning("未取到任何微博, 下次再尝试建立基线")
+            log.warning("[%s] 未取到任何微博, 下次再尝试建立基线", name)
             return 0
         newest = max(normal, key=lambda m: int(str(m["id"])))
-        state["last_id"] = str(int(str(newest["id"])))
+        blogger["last_id"] = str(int(str(newest["id"])))
         if newest.get("user", {}).get("screen_name"):
-            state["screen_name"] = newest["user"]["screen_name"]
+            blogger["screen_name"] = newest["user"]["screen_name"]
         save_state(state)
-        log.info("首次运行, 已建立基线 last_id=%s (博主: %s), 之后的更新才会推送",
-                 state["last_id"], state.get("screen_name", "?"))
+        log.info("[%s] 首次运行, 已建立基线 last_id=%s, 之后的更新才会推送",
+                 name, blogger["last_id"])
         return 0
 
     seen = {}  # pid -> (pid, time, text), 防翻页重叠导致重复推送
@@ -315,28 +339,29 @@ def check_once(cfg):
             break
 
     if not fresh:
-        log.info("无新微博 (last_id=%s)", last_id)
+        log.info("[%s] 无新微博 (last_id=%s)", name, last_id)
         return 0
 
-    log.info("发现 %d 条新微博, 推送飞书...", len(fresh))
+    log.info("[%s] 发现 %d 条新微博, 推送飞书...", name, len(fresh))
     webhook = cfg["feishu"]["webhook"]
     if not webhook:
-        log.error("未配置 FEISHU_WEBHOOK, 无法推送 ( Secrets 或 config.json 里填)")
+        log.error("[%s] 未配置 FEISHU_WEBHOOK, 无法推送 ( Secrets 或 config.json 里填)", name)
         return 2
     pushed = 0
     for pid, t, text in fresh:
         try:
             push_feishu(webhook, cfg["feishu"]["secret"], name, t, text)
             pushed += 1
-            log.info("已推送 id=%s", pid)
-            save_state({**state, "last_id": str(pid)})  # 逐条落盘, 中断也不丢
+            log.info("[%s] 已推送 id=%s", name, pid)
+            blogger["last_id"] = str(pid)
+            save_state(state)  # 逐条落盘, 中断也不丢
             time.sleep(2)  # 控制频率
         except Exception as e:  # noqa: BLE001
-            log.error("推送 id=%s 失败: %s (下次运行将重试)", pid, e)
+            log.error("[%s] 推送 id=%s 失败: %s (下次运行将重试)", name, pid, e)
             break
     if pushed < len(fresh):
         return 1
-    log.info("全部推送完成")
+    log.info("[%s] 全部推送完成", name)
     return 0
 
 
