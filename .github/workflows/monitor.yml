@@ -1,0 +1,49 @@
+# 微博监控定时任务: 每 10 分钟检查一次, 发现新微博推送飞书
+# GitHub 的定时任务基于 UTC, 有 0~15 分钟左右的随机延迟, 属正常现象
+name: weibo-monitor
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: # 允许在 Actions 页面手动触发测试
+
+permissions:
+  contents: write # 允许回写 state.json(断点续传的关键)
+
+concurrency:
+  group: weibo-monitor
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 检查并推送
+        env:
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+          FEISHU_SECRET: ${{ secrets.FEISHU_SECRET }}
+          WEIBO_COOKIE: ${{ secrets.WEIBO_COOKIE }}
+        run: python weibo_monitor.py
+
+      - name: 回写 state.json
+        if: always() # 推送失败也要保存已推送进度, 否则下次会重复推送
+        run: |
+          git config user.name "weibo-monitor-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state.json
+          if git diff --cached --quiet; then
+            echo "state 无变化"
+          else
+            git commit -m "chore: update weibo state [skip ci]"
+            for i in 1 2 3; do
+              git pull --rebase --autostash origin "$GITHUB_REF_NAME" && git push origin HEAD:"$GITHUB_REF_NAME" && break
+              echo "推送冲突, 第 $i 次重试..."
+              sleep 5
+            done
+          fi
