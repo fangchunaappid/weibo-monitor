@@ -1,10 +1,11 @@
 # 微博监控定时任务: 每 10 分钟检查一次, 发现新微博推送飞书
 # GitHub 的定时任务基于 UTC, 有 0~15 分钟左右的随机延迟, 属正常现象
+# 注意: 分钟取值刻意错开整点(避免 */10 的整点对齐), 提高 GitHub 调度器执行概率
 name: weibo-monitor
 
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "3,13,23,33,43,53 * * * *"
   workflow_dispatch: # 允许在 Actions 页面手动触发测试
 
 permissions:
