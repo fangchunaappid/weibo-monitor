@@ -1,0 +1,26 @@
+name: backfill-weibo
+
+# 一次性补发工具: 仅 Actions 页面手动触发, 无 schedule / 无 push, 不会被 cron-job 触发。
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "填 YES 才会真正推送到飞书; 其它值只做 DRY-RUN"
+        required: true
+        default: "NO"
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: 补发漏掉的微博
+        env:
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+          FEISHU_SECRET: ${{ secrets.FEISHU_SECRET }}
+          WEIBO_COOKIE: ${{ secrets.WEIBO_COOKIE }}
+          BACKFILL_CONFIRM: ${{ inputs.confirm }}
+        run: python backfill.py
