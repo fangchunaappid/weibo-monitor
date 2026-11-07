@@ -321,8 +321,18 @@ def check_blogger(cfg, uid, state):
         return 0
 
     seen = {}  # pid -> (pid, time, text), 防翻页重叠导致重复推送
+    fresh = []
     for page in range(1, MAX_PAGES + 1):
-        posts = fetch_posts(uid, cfg["cookie"], page)
+        try:
+            posts = fetch_posts(uid, cfg["cookie"], page)
+        except RuntimeError as e:
+            if page == 1:
+                raise
+            # 游客态访问第 2 页起会被微博要求登录(ok=-100)。
+            # 保留第 1 页已抓到的结果继续推送，避免整轮失败导致进度卡死。
+            log.warning("[%s] 第 %d 页抓取失败(%s)，保留第 1 页已抓到的 %d 条继续",
+                        name, page, e, len(seen))
+            break
         if not posts:
             break
         normal = [mb for mb in posts if not is_pinned(mb)]
