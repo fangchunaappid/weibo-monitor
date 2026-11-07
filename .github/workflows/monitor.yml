@@ -1,9 +1,11 @@
-# 微博监控: 由 cron-job.org 每 2 小时(北京时间偶数小时 03 分)通过 workflow_dispatch 触发
-# 本仓库刻意不配置 GitHub schedule, 避免与外部调度重复触发
+# 微博监控: 主驱动为 cron-job.org 每 4 分钟通过 workflow_dispatch 触发
+# GitHub schedule 每 2 小时一次, 仅作兜底(外部调度失效时仍能检查)
 # 也可在 Actions 页面手动运行 workflow 做测试
 name: weibo-monitor
 
 on:
+  schedule:
+    - cron: "3 */2 * * *"
   workflow_dispatch: # cron-job.org 定时触发 + Actions 页面手动触发
 
 permissions:
