@@ -119,3 +119,35 @@ show("9_html", *get(f"https://weibo.com/u/{UID}",
 # 10 m 站时间线（非 container）
 show("10_m_timeline", *get(
     f"https://m.weibo.cn/api/statuses/user_timeline?uid={UID}&page=1", {**base, "Cookie": ck}))
+
+# ---- 11+ 直接用监控脚本自身的逻辑复现 ----
+import importlib.util
+spec = importlib.util.spec_from_file_location("wm", "weibo_monitor.py")
+wm = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(wm)
+
+for i in range(3):
+    wm._reset_visitor()
+    try:
+        posts = wm.fetch_posts(UID)
+        print(f"CASE 11.{i} monitor_fetch OK posts={len(posts)}")
+    except Exception as e:  # noqa: BLE001
+        print(f"CASE 11.{i} monitor_fetch FAIL {str(e)[:180]}")
+
+wm._reset_visitor()
+try:
+    posts = wm.fetch_posts(CTRL)
+    print(f"CASE 12 monitor_fetch control OK posts={len(posts)}")
+except Exception as e:  # noqa: BLE001
+    print(f"CASE 12 monitor_fetch control FAIL {str(e)[:180]}")
+
+# ---- 13 连续多次同一接口，观察是否限流 ----
+for i in range(5):
+    ck2 = wm._visitor_cookies() if i == 0 else wm._visitor_cookies()
+    st, txt = get(api, {**base, "Cookie": ck2})
+    ok = None
+    try:
+        ok = json.loads(txt).get("ok")
+    except Exception:  # noqa: BLE001
+        pass
+    print(f"CASE 13.{i} rapid http={st} ok={ok} len={len(txt)}")
