@@ -1,12 +1,10 @@
-# 微博监控定时任务(schedule 兜底): 每 2 小时检查一次, 发现新微博推送飞书
-# GitHub 的定时任务基于 UTC, 有 0~15 分钟左右的随机延迟, 属正常现象
-# 注意: 分钟取 3 分, 刻意错开整点, 提高 GitHub 调度器执行概率
+# 微博监控: 由 cron-job.org 每 2 小时(北京时间偶数小时 03 分)通过 workflow_dispatch 触发
+# 本仓库刻意不配置 GitHub schedule, 避免与外部调度重复触发
+# 也可在 Actions 页面手动运行 workflow 做测试
 name: weibo-monitor
 
 on:
-  schedule:
-    - cron: "3 */2 * * *"
-  workflow_dispatch: # 允许在 Actions 页面手动触发测试
+  workflow_dispatch: # cron-job.org 定时触发 + Actions 页面手动触发
 
 permissions:
   contents: write # 允许回写 state.json(断点续传的关键)
