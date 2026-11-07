@@ -4,7 +4,6 @@
 name: weibo-monitor
 
 on:
-  push:
   schedule:
     - cron: "3,13,23,33,43,53 * * * *"
   workflow_dispatch: # 允许在 Actions 页面手动触发测试
